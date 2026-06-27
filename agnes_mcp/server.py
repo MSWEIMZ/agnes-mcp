@@ -66,7 +66,6 @@ def _headers() -> dict[str, str]:
 
 
 def _resolve_output_dir(output_dir: str | None) -> Path:
-    """Resolve output directory, defaulting to user's home ~/agnes_output."""
     if output_dir:
         return Path(output_dir)
     return Path.home() / "agnes_output"
@@ -83,7 +82,7 @@ def _save_b64_png(b64_text: str, output_dir: Path) -> Path:
     return target
 
 
-def _download_file(url: str, output_dir: Path, ext: str = ".png") -> Path:
+async def _download_file(url: str, output_dir: Path, ext: str = ".png") -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     fname = urlparse(url).path.split("/")[-1] or f"file{ext}"
     if not fname.endswith(ext):
@@ -95,8 +94,8 @@ def _download_file(url: str, output_dir: Path, ext: str = ".png") -> Path:
         stem = fname.rsplit(".", 1)[0]
         target = output_dir / f"{stem}_{counter}{ext}"
         counter += 1
-    with httpx.Client(timeout=DEFAULT_TIMEOUT, follow_redirects=True) as client:
-        resp = client.get(url)
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, follow_redirects=True) as client:
+        resp = await client.get(url)
         if resp.status_code >= 400:
             raise AgnesError(f"Download failed: HTTP {resp.status_code}")
         target.write_bytes(resp.content)
@@ -105,7 +104,7 @@ def _download_file(url: str, output_dir: Path, ext: str = ".png") -> Path:
 
 # ==================== Image API ====================
 
-def generate_image(
+async def generate_image(
     prompt: str,
     output_dir: Path,
     model: str | None = None,
@@ -129,8 +128,8 @@ def generate_image(
     }
 
     url = f"{base_url}/images/generations"
-    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
-        resp = client.post(url, headers=_headers(), json=payload)
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+        resp = await client.post(url, headers=_headers(), json=payload)
         if resp.status_code >= 400:
             raise AgnesError(f"API error {resp.status_code}: {resp.text}")
         data = resp.json()
@@ -149,7 +148,7 @@ def generate_image(
     if b64_json:
         local_path = str(_save_b64_png(b64_json, output_dir))
     elif image_url:
-        local_path = str(_download_file(image_url, output_dir, ".png"))
+        local_path = str(await _download_file(image_url, output_dir, ".png"))
 
     return {
         "url": image_url,
@@ -161,7 +160,7 @@ def generate_image(
 
 # ==================== Video API ====================
 
-def create_video_task(
+async def create_video_task(
     prompt: str,
     model: str | None = None,
     width: int = 1152,
@@ -194,8 +193,8 @@ def create_video_task(
         payload["seed"] = seed
 
     url = f"{base_url}/videos"
-    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
-        resp = client.post(url, headers=_headers(), json=payload)
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+        resp = await client.post(url, headers=_headers(), json=payload)
         if resp.status_code >= 400:
             raise AgnesError(f"API error {resp.status_code}: {resp.text}")
         data = resp.json()
@@ -208,7 +207,7 @@ def create_video_task(
     }
 
 
-def get_video_result(
+async def get_video_result(
     video_id: str | None = None,
     task_id: str | None = None,
 ) -> dict[str, Any]:
@@ -221,8 +220,8 @@ def get_video_result(
         base_url = os.getenv("AGNES_API_BASE", DEFAULT_API_BASE).rstrip("/")
         url = f"{base_url}/videos/{task_id}"
 
-    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
-        resp = client.get(url, headers=_headers())
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+        resp = await client.get(url, headers=_headers())
         if resp.status_code >= 400:
             raise AgnesError(f"API error {resp.status_code}: {resp.text}")
         data = resp.json()
@@ -239,7 +238,7 @@ def get_video_result(
     }
 
 
-def generate_video(
+async def generate_video(
     prompt: str,
     output_dir: Path,
     model: str | None = None,
@@ -252,7 +251,7 @@ def generate_video(
     seed: int | None = None,
     poll_timeout: float = VIDEO_POLL_TIMEOUT,
 ) -> dict[str, Any]:
-    task = create_video_task(
+    task = await create_video_task(
         prompt=prompt, model=model, width=width, height=height,
         num_frames=num_frames, frame_rate=frame_rate,
         image=image, negative_prompt=negative_prompt, seed=seed,
@@ -265,13 +264,13 @@ def generate_video(
 
     start = time.time()
     while time.time() - start < poll_timeout:
-        result = get_video_result(video_id=video_id, task_id=task_id)
+        result = await get_video_result(video_id=video_id, task_id=task_id)
         status = result.get("status")
         if status == "completed":
             video_url = result.get("video_url")
             local_path = None
             if video_url:
-                local_path = str(_download_file(video_url, output_dir, ".mp4"))
+                local_path = str(await _download_file(video_url, output_dir, ".mp4"))
             return {**result, "local_path": local_path}
         if status == "failed":
             raise AgnesError(f"Video generation failed: {result.get('error')}")
@@ -309,7 +308,7 @@ async def text_to_image(
     Returns:
         dict with url, local_path, model, size.
     """
-    return generate_image(
+    return await generate_image(
         prompt=prompt,
         output_dir=_resolve_output_dir(output_dir),
         model=model,
@@ -350,7 +349,7 @@ async def text_to_video(
     Returns:
         dict with video_id, status, video_url, local_path, seconds, size.
     """
-    return generate_video(
+    return await generate_video(
         prompt=prompt,
         output_dir=_resolve_output_dir(output_dir),
         model=model,
@@ -378,7 +377,7 @@ async def check_video_status(
     Returns:
         dict with task_id, video_id, status, progress, video_url, seconds, size, error.
     """
-    return get_video_result(
+    return await get_video_result(
         video_id=video_id or None,
         task_id=task_id or None,
     )

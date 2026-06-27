@@ -1,4 +1,5 @@
 import os
+import asyncio
 from pathlib import Path
 import pytest
 from agnes_mcp import server
@@ -7,23 +8,23 @@ from agnes_mcp.server import generate_image, create_video_task, get_video_result
 
 def test_empty_prompt_raises():
     with pytest.raises(AgnesError, match="prompt cannot be empty"):
-        generate_image("   ", Path("."))
+        asyncio.run(generate_image("   ", Path(".")))
 
 
 def test_missing_api_key_raises(monkeypatch):
     monkeypatch.delenv("AGNES_API_KEY", raising=False)
     with pytest.raises(AgnesError, match="AGNES_API_KEY"):
-        generate_image("test", Path("."))
+        asyncio.run(generate_image("test", Path(".")))
 
 
 def test_video_empty_prompt_raises():
     with pytest.raises(AgnesError, match="prompt cannot be empty"):
-        create_video_task("   ")
+        asyncio.run(create_video_task("   "))
 
 
 def test_video_missing_ids_raises():
     with pytest.raises(AgnesError, match="video_id or task_id required"):
-        get_video_result()
+        asyncio.run(get_video_result())
 
 
 def test_save_b64_png(tmp_path):
