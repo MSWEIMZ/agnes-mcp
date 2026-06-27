@@ -8,7 +8,7 @@ import pytest
 from agnes_mcp import server
 from agnes_mcp.server import (
     generate_image, create_video_task, get_video_result,
-    AgnesError, _resolve_output_dir, _request_with_retry,
+    AgnesError, _resolve_output_dir, _request_with_retry, image_to_image,
 )
 
 
@@ -189,3 +189,117 @@ def test_retry_on_transient_error(monkeypatch):
 
     assert call_count == 3
     assert result["url"] == "ok.png"
+
+
+# ==================== New feature tests (v0.2.0) ====================
+
+def test_image_to_image_empty_images_raises():
+    """image_to_image requires at least one reference image."""
+    from agnes_mcp.server import image_to_image
+    with pytest.raises(AgnesError, match="images list cannot be empty"):
+        asyncio.run(image_to_image(prompt="a cat", images=[]))
+
+
+def test_generate_image_with_n(tmp_path, monkeypatch):
+    """generate_image with n>1 returns multiple results."""
+    monkeypatch.setenv("AGNES_API_KEY", "test-key")
+    mock_data = {
+        "data": [
+            {"url": "https://example.com/cat_0.png", "b64_json": None},
+            {"url": "https://example.com/cat_1.png", "b64_json": None},
+        ]
+    }
+
+    with patch("agnes_mcp.server.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        instance.post = AsyncMock(return_value=_mock_response(200, mock_data))
+        instance.get = AsyncMock(return_value=_mock_response(200, b"\x89PNG"))
+        MockClient.return_value = instance
+
+        with patch("agnes_mcp.server._download_file", new_callable=AsyncMock) as mock_dl:
+            mock_dl.side_effect = [tmp_path / "cat_0.png", tmp_path / "cat_1.png"]
+            result = asyncio.run(generate_image("a cat", tmp_path, n=2))
+
+    assert result["n"] == 2
+    assert len(result["images"]) == 2
+    assert result["url"] == "https://example.com/cat_0.png"
+
+
+def test_generate_image_with_images_param(tmp_path, monkeypatch):
+    """generate_image with images passes them in extra_body."""
+    monkeypatch.setenv("AGNES_API_KEY", "test-key")
+    ref_urls = ["https://example.com/ref1.png", "https://example.com/ref2.png"]
+    mock_data = {"data": [{"url": "https://example.com/out.png", "b64_json": None}]}
+
+    captured_payload = {}
+
+    async def capture_post(url, headers=None, json=None):
+        captured_payload.update(json)
+        return _mock_response(200, mock_data)
+
+    with patch("agnes_mcp.server.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        instance.post = capture_post
+        MockClient.return_value = instance
+
+        with patch("agnes_mcp.server._download_file", new_callable=AsyncMock) as mock_dl:
+            mock_dl.return_value = tmp_path / "out.png"
+            result = asyncio.run(generate_image("compose these", tmp_path, images=ref_urls))
+
+    assert captured_payload["extra_body"]["images"] == ref_urls
+    assert result["n"] == 1
+
+
+def test_create_video_task_with_images(monkeypatch):
+    """create_video_task with images list passes them in payload."""
+    monkeypatch.setenv("AGNES_API_KEY", "test-key")
+    mock_data = {"id": "task_789", "video_id": "video_012", "status": "queued"}
+    captured_payload = {}
+
+    async def capture_post(url, headers=None, json=None):
+        captured_payload.update(json)
+        return _mock_response(200, mock_data)
+
+    with patch("agnes_mcp.server.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        instance.post = capture_post
+        MockClient.return_value = instance
+
+        imgs = ["https://example.com/frame1.png", "https://example.com/frame2.png"]
+        result = asyncio.run(create_video_task("a dance", images=imgs))
+
+    assert captured_payload["images"] == imgs
+    assert "image" not in captured_payload  # images takes priority
+
+
+def test_create_video_task_images_overrides_image(monkeypatch):
+    """When images is provided, single image is ignored."""
+    monkeypatch.setenv("AGNES_API_KEY", "test-key")
+    mock_data = {"id": "t", "video_id": "v", "status": "queued"}
+    captured_payload = {}
+
+    async def capture_post(url, headers=None, json=None):
+        captured_payload.update(json)
+        return _mock_response(200, mock_data)
+
+    with patch("agnes_mcp.server.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        instance.post = capture_post
+        MockClient.return_value = instance
+
+        result = asyncio.run(create_video_task(
+            "test",
+            image="https://example.com/single.png",
+            images=["https://example.com/multi1.png", "https://example.com/multi2.png"],
+        ))
+
+    assert captured_payload["images"] == ["https://example.com/multi1.png", "https://example.com/multi2.png"]
+    assert "image" not in captured_payload
