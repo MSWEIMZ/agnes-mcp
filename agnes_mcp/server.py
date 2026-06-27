@@ -304,9 +304,11 @@ async def get_video_result(
         raise AgnesError("video_id or task_id required")
 
     base_url = os.getenv("AGNES_API_BASE", DEFAULT_API_BASE).rstrip("/")
+    # agnesapi endpoint is at root level (no /v1 prefix)
+    api_hub_base = base_url.rsplit("/v1", 1)[0] if base_url.endswith("/v1") or "/v1" in base_url.split("://", 1)[-1] else base_url
 
     if video_id:
-        url = f"{base_url}/agnesapi?video_id={video_id}"
+        url = f"{api_hub_base}/agnesapi?video_id={video_id}"
     else:
         url = f"{base_url}/videos/{task_id}"
 
