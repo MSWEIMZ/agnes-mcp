@@ -9,6 +9,7 @@ from agnes_mcp import server
 from agnes_mcp.server import (
     generate_image, create_video_task, get_video_result,
     AgnesError, _resolve_output_dir, _request_with_retry, image_to_image,
+    image_to_video, keyframe_animation,
 )
 
 
@@ -303,3 +304,156 @@ def test_create_video_task_images_overrides_image(monkeypatch):
 
     assert captured_payload["images"] == ["https://example.com/multi1.png", "https://example.com/multi2.png"]
     assert "image" not in captured_payload
+
+
+# ==================== v0.3.0 tests ====================
+
+def test_create_video_task_with_mode_and_steps(monkeypatch):
+    """create_video_task passes mode and num_inference_steps in payload."""
+    monkeypatch.setenv("AGNES_API_KEY", "test-key")
+    mock_data = {"id": "t1", "video_id": "v1", "status": "queued"}
+    captured_payload = {}
+
+    async def capture_post(url, headers=None, json=None):
+        captured_payload.update(json)
+        return _mock_response(200, mock_data)
+
+    with patch("agnes_mcp.server.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        instance.post = capture_post
+        MockClient.return_value = instance
+
+        result = asyncio.run(create_video_task(
+            "a cat", mode="keyframes", num_inference_steps=30
+        ))
+
+    assert captured_payload["mode"] == "keyframes"
+    assert captured_payload["num_inference_steps"] == 30
+    assert result["status"] == "queued"
+
+
+def test_create_video_task_without_mode(monkeypatch):
+    """create_video_task omits mode/num_inference_steps when not provided."""
+    monkeypatch.setenv("AGNES_API_KEY", "test-key")
+    mock_data = {"id": "t2", "video_id": "v2", "status": "queued"}
+    captured_payload = {}
+
+    async def capture_post(url, headers=None, json=None):
+        captured_payload.update(json)
+        return _mock_response(200, mock_data)
+
+    with patch("agnes_mcp.server.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        instance.post = capture_post
+        MockClient.return_value = instance
+
+        result = asyncio.run(create_video_task("a dog"))
+
+    assert "mode" not in captured_payload
+    assert "num_inference_steps" not in captured_payload
+
+
+def test_image_to_video_empty_image_raises():
+    """image_to_video requires an image URL."""
+    with pytest.raises(AgnesError, match="image URL is required"):
+        asyncio.run(image_to_video(prompt="animate", image=""))
+
+
+def test_keyframe_animation_too_few_images_raises():
+    """keyframe_animation requires at least 2 images."""
+    with pytest.raises(AgnesError, match="At least 2 keyframe images"):
+        asyncio.run(keyframe_animation(prompt="transition", images=["https://example.com/one.png"]))
+
+
+def test_keyframe_animation_empty_images_raises():
+    """keyframe_animation rejects empty image list."""
+    with pytest.raises(AgnesError, match="At least 2 keyframe images"):
+        asyncio.run(keyframe_animation(prompt="transition", images=[]))
+
+
+def test_image_to_video_passes_image(monkeypatch):
+    """image_to_video passes single image to create_video_task."""
+    monkeypatch.setenv("AGNES_API_KEY", "test-key")
+    captured_kwargs = {}
+
+    async def mock_generate_video(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"video_id": "v3", "status": "completed", "video_url": "http://example.com/v.mp4", "local_path": None}
+
+    with patch("agnes_mcp.server.generate_video", side_effect=mock_generate_video):
+        result = asyncio.run(image_to_video(
+            prompt="animate this",
+            image="https://example.com/photo.png",
+        ))
+
+    assert captured_kwargs["image"] == "https://example.com/photo.png"
+    assert captured_kwargs.get("images") is None
+    assert result["video_id"] == "v3"
+
+
+def test_keyframe_animation_passes_mode_and_images(monkeypatch):
+    """keyframe_animation sets mode=keyframes and passes images list."""
+    monkeypatch.setenv("AGNES_API_KEY", "test-key")
+    captured_kwargs = {}
+
+    async def mock_generate_video(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"video_id": "v4", "status": "completed", "video_url": "http://example.com/v.mp4", "local_path": None}
+
+    imgs = ["https://example.com/kf1.png", "https://example.com/kf2.png", "https://example.com/kf3.png"]
+    with patch("agnes_mcp.server.generate_video", side_effect=mock_generate_video):
+        result = asyncio.run(keyframe_animation(
+            prompt="smooth transition",
+            images=imgs,
+        ))
+
+    assert captured_kwargs["mode"] == "keyframes"
+    assert captured_kwargs["images"] == imgs
+    assert captured_kwargs.get("image") is None
+    assert result["video_id"] == "v4"
+
+
+def test_image_to_video_with_seed_and_steps(monkeypatch):
+    """image_to_video passes seed and num_inference_steps correctly."""
+    monkeypatch.setenv("AGNES_API_KEY", "test-key")
+    captured_kwargs = {}
+
+    async def mock_generate_video(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"video_id": "v5", "status": "completed", "video_url": None, "local_path": None}
+
+    with patch("agnes_mcp.server.generate_video", side_effect=mock_generate_video):
+        result = asyncio.run(image_to_video(
+            prompt="animate",
+            image="https://example.com/img.png",
+            seed=42,
+            num_inference_steps=25,
+        ))
+
+    assert captured_kwargs["seed"] == 42
+    assert captured_kwargs["num_inference_steps"] == 25
+
+
+def test_text_to_video_with_mode(monkeypatch):
+    """text_to_video passes mode parameter correctly."""
+    monkeypatch.setenv("AGNES_API_KEY", "test-key")
+    captured_kwargs = {}
+
+    async def mock_generate_video(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"video_id": "v6", "status": "completed", "video_url": None, "local_path": None}
+
+    from agnes_mcp.server import text_to_video
+    with patch("agnes_mcp.server.generate_video", side_effect=mock_generate_video):
+        result = asyncio.run(text_to_video(
+            prompt="a cat walking",
+            mode="ti2vid",
+            num_inference_steps=30,
+        ))
+
+    assert captured_kwargs["mode"] == "ti2vid"
+    assert captured_kwargs["num_inference_steps"] == 30

@@ -1,4 +1,4 @@
-﻿"""Agnes AI MCP Server.
+"""Agnes AI MCP Server.
 
 Provides text-to-image, image-to-image, text-to-video, and video status
 checking via the Agnes AI API (https://agnes-ai.com).
@@ -21,7 +21,7 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +254,8 @@ async def create_video_task(
     images: list[str] | None = None,
     negative_prompt: str | None = None,
     seed: int | None = None,
+    mode: str | None = None,
+    num_inference_steps: int | None = None,
 ) -> dict[str, Any]:
     if not prompt or not prompt.strip():
         raise AgnesError("prompt cannot be empty")
@@ -279,6 +281,10 @@ async def create_video_task(
         payload["negative_prompt"] = negative_prompt
     if seed is not None:
         payload["seed"] = seed
+    if mode:
+        payload["mode"] = mode
+    if num_inference_steps is not None:
+        payload["num_inference_steps"] = num_inference_steps
 
     data = await _request_with_retry("POST", f"{base_url}/videos", json=payload)
 
@@ -334,6 +340,8 @@ async def generate_video(
     images: list[str] | None = None,
     negative_prompt: str | None = None,
     seed: int | None = None,
+    mode: str | None = None,
+    num_inference_steps: int | None = None,
     poll_timeout: float = VIDEO_POLL_TIMEOUT,
 ) -> dict[str, Any]:
     task = await create_video_task(
@@ -341,6 +349,7 @@ async def generate_video(
         num_frames=num_frames, frame_rate=frame_rate,
         image=image, images=images,
         negative_prompt=negative_prompt, seed=seed,
+        mode=mode, num_inference_steps=num_inference_steps,
     )
 
     video_id = task.get("video_id")
@@ -462,6 +471,8 @@ async def text_to_video(
     images: list[str] | None = None,
     negative_prompt: str = "",
     seed: int = -1,
+    mode: str = "",
+    num_inference_steps: int = -1,
     output_dir: str = "",
 ) -> dict[str, Any]:
     """Generate a video from text (and optional image(s)) using Agnes AI.
@@ -481,6 +492,8 @@ async def text_to_video(
             When provided, 'image' is ignored.
         negative_prompt: Optional negative prompt to exclude from generation.
         seed: Optional random seed (-1 for random).
+        mode: Generation mode (e.g. 'ti2vid', 'keyframes'). Optional.
+        num_inference_steps: Number of inference steps. Optional.
         output_dir: Directory to save the downloaded video. Defaults to ~/agnes_output.
 
     Returns:
@@ -498,6 +511,121 @@ async def text_to_video(
         images=images or None,
         negative_prompt=negative_prompt or None,
         seed=seed if seed >= 0 else None,
+        mode=mode or None,
+        num_inference_steps=num_inference_steps if num_inference_steps >= 0 else None,
+    )
+
+
+@mcp.tool()
+async def image_to_video(
+    prompt: str,
+    image: str,
+    model: str = "agnes-video-v2.0",
+    width: int = 1152,
+    height: int = 768,
+    num_frames: int = 121,
+    frame_rate: int = 24,
+    negative_prompt: str = "",
+    seed: int = -1,
+    num_inference_steps: int = -1,
+    output_dir: str = "",
+) -> dict[str, Any]:
+    """Animate a static image into a video using Agnes AI.
+
+    Provide a single image URL (or Data URI base64) and a text prompt
+    describing the desired motion/animation.
+
+    This is an async operation that polls until completion (may take several minutes).
+
+    Args:
+        prompt: Text description of the desired motion/animation.
+        image: Input image URL or Data URI base64 (required).
+        model: Model name. Default: agnes-video-v2.0
+        width: Video width. Default: 1152
+        height: Video height. Default: 768
+        num_frames: Total frames (8n+1 rule, max 441).
+            Common values: 81(~3s), 121(~5s), 241(~10s), 441(~18s)
+        frame_rate: FPS, 1-60. Default: 24
+        negative_prompt: Optional negative prompt to exclude from generation.
+        seed: Optional random seed (-1 for random).
+        num_inference_steps: Number of inference steps. Optional.
+        output_dir: Directory to save the downloaded video. Defaults to ~/agnes_output.
+
+    Returns:
+        dict with video_id, status, video_url, local_path, seconds, size.
+    """
+    if not image:
+        raise AgnesError("image URL is required for image-to-video generation")
+
+    return await generate_video(
+        prompt=prompt,
+        output_dir=_resolve_output_dir(output_dir),
+        model=model,
+        width=width,
+        height=height,
+        num_frames=num_frames,
+        frame_rate=frame_rate,
+        image=image,
+        negative_prompt=negative_prompt or None,
+        seed=seed if seed >= 0 else None,
+        num_inference_steps=num_inference_steps if num_inference_steps >= 0 else None,
+    )
+
+
+@mcp.tool()
+async def keyframe_animation(
+    prompt: str,
+    images: list[str],
+    model: str = "agnes-video-v2.0",
+    width: int = 1152,
+    height: int = 768,
+    num_frames: int = 121,
+    frame_rate: int = 24,
+    negative_prompt: str = "",
+    seed: int = -1,
+    num_inference_steps: int = -1,
+    output_dir: str = "",
+) -> dict[str, Any]:
+    """Generate a smooth video transitioning between multiple keyframe images.
+
+    Provide 2+ image URLs as keyframes. The model generates a video that
+    smoothly transitions between them, guided by the text prompt.
+
+    This is an async operation that polls until completion (may take several minutes).
+
+    Args:
+        prompt: Text description guiding the animation and transitions.
+        images: List of keyframe image URLs (at least 2 recommended).
+        model: Model name. Default: agnes-video-v2.0
+        width: Video width. Default: 1152
+        height: Video height. Default: 768
+        num_frames: Total frames (8n+1 rule, max 441).
+            Common values: 81(~3s), 121(~5s), 241(~10s), 441(~18s)
+        frame_rate: FPS, 1-60. Default: 24
+        negative_prompt: Optional negative prompt to exclude from generation.
+        seed: Optional random seed (-1 for random).
+        num_inference_steps: Number of inference steps. Optional.
+        output_dir: Directory to save the downloaded video. Defaults to ~/agnes_output.
+
+    Returns:
+        dict with video_id, status, video_url, local_path, seconds, size.
+    """
+    if not images or len(images) < 2:
+        raise AgnesError("At least 2 keyframe images are required for keyframe animation")
+
+    return await generate_video(
+        prompt=prompt,
+        output_dir=_resolve_output_dir(output_dir),
+        model=model,
+        width=width,
+        height=height,
+        num_frames=num_frames,
+        frame_rate=frame_rate,
+        images=images,
+        mode="keyframes",
+        negative_prompt=negative_prompt or None,
+        seed=seed if seed >= 0 else None,
+        num_inference_steps=num_inference_steps if num_inference_steps >= 0 else None,
     )
 
 

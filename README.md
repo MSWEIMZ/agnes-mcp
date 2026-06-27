@@ -99,7 +99,9 @@ That's it! Now you can generate images and videos directly from your AI assistan
 |------|-------------|---------|
 | `text_to_image` | Generate image(s) from text | `prompt: "a cat"` + optional `n: 4`, `images: [ref_url]` |
 | `image_to_image` | Generate from reference image(s) + text | `prompt: "make it cyberpunk"` + `images: [url]` |
-| `text_to_video` | Generate video from text/image(s) | `prompt: "a cat dancing"` + optional `images: [urls]` |
+| `text_to_video` | Generate video from text/image(s) | `prompt: "a cat dancing"` + optional `mode`, `num_inference_steps` |
+| `image_to_video` | Animate a static image into video | `prompt: "zoom in slowly"` + `image: "url"` |
+| `keyframe_animation` | Smooth transition between keyframe images | `prompt: "morph scene"` + `images: [url1, url2, ...]` |
 | `check_video_status` | Check async video task status | `video_id: "xxx"` or `task_id: "xxx"` |
 
 ---
@@ -136,6 +138,13 @@ That's it! Now you can generate images and videos directly from your AI assistan
 ---
 
 ## 📋 Changelog
+
+### v0.3.0 (2026-06-28)
+- ✨ New tool: `image_to_video` — animate a static image into video
+- ✨ New tool: `keyframe_animation` — smooth transitions between multiple keyframe images
+- ✨ `text_to_video`: added `mode` and `num_inference_steps` parameters
+- ✨ `create_video_task` / `generate_video`: support `mode` (e.g. `ti2vid`, `keyframes`) and `num_inference_steps`
+- ✅ 28 tests passing
 
 ### v0.2.0 (2026-06-27)
 - ✨ New tool: `image_to_image` — generate from reference image(s) + prompt

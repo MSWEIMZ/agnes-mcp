@@ -99,7 +99,9 @@ AGNES_API_KEY = "你的 API Key"
 |--------|------|------|
 | `text_to_image` | 文生图（支持批量 1-4 张 + 多图合成） | `prompt: "一只猫"` + 可选 `n: 4`, `images: [ref_url]` |
 | `image_to_image` | 图生图（参考图 + 文本 prompt） | `prompt: "变成赛博朋克风格"` + `images: [url]` |
-| `text_to_video` | 文生视频/图生视频/多图关键帧 | `prompt: "一只猫在跳舞"` + 可选 `images: [urls]` |
+| `text_to_video` | 文生视频（支持 mode、num_inference_steps） | `prompt: "一只猫在跳舞"` + 可选 `mode`, `num_inference_steps` |
+| `image_to_video` | 图生视频（静态图片转视频） | `prompt: "缓慢推进"` + `image: "url"` |
+| `keyframe_animation` | 关键帧动画（多图间平滑过渡） | `prompt: "场景变换"` + `images: [url1, url2, ...]` |
 | `check_video_status` | 查询视频任务状态 | `video_id: "xxx"` 或 `task_id: "xxx"` |
 
 ---
@@ -136,6 +138,13 @@ AGNES_API_KEY = "你的 API Key"
 ---
 
 ## 📋 更新日志
+
+### v0.3.0 (2026-06-28)
+- ✨ 新增工具：`image_to_video` — 静态图片转视频
+- ✨ 新增工具：`keyframe_animation` — 多张关键帧图片间平滑过渡动画
+- ✨ `text_to_video`：新增 `mode` 和 `num_inference_steps` 参数
+- ✨ `create_video_task` / `generate_video`：支持 `mode`（如 `ti2vid`、`keyframes`）和 `num_inference_steps`
+- ✅ 28 个测试全部通过
 
 ### v0.2.0 (2026-06-27)
 - ✨ 新增工具：`image_to_image` — 图生图（参考图 + prompt）

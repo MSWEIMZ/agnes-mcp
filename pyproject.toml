@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agnes-mcp"
-version = "0.2.0"
-description = "MCP server for Agnes AI - Text-to-Image and Text-to-Video generation"
+version = "0.3.0"
+description = "MCP server for Agnes AI - Free Text-to-Image, Image-to-Image, Text-to-Video, Image-to-Video, and Keyframe Animation"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
