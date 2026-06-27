@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -31,3 +31,18 @@ jobs:
           AGNES_API_KEY: test-key-for-ci
         run: |
           python -m pytest test_server.py -v
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check syntax
+        run: |
+          python -m py_compile agnes_mcp/server.py
+          python -m py_compile agnes_mcp/__init__.py
