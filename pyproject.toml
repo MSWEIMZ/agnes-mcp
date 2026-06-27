@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agnes-mcp"
+version = "0.1.0"
+description = "MCP server for Agnes AI - Text-to-Image and Text-to-Video generation"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Agnes MCP Contributors" },
+]
+keywords = ["mcp", "agnes", "image-generation", "video-generation", "ai", "model-context-protocol"]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Multimedia :: Video",
+]
+dependencies = [
+    "httpx",
+    "mcp[cli]",
+]
+
+[project.scripts]
+agnes-mcp = "agnes_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agnes_mcp"]

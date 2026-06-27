@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sensitive / temp files (root-level only)
+/call_mcp_generate.py
+/generate_files.py
+/generate_package.py
+/test_generate.py
+/server.py
+/output/
+*.png
+*.mp4
+/ppt_tmp/
