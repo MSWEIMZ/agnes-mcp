@@ -11,8 +11,9 @@ Environment variables:
 """
 
 import os
-import time
+import asyncio
 import base64
+import logging
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any
@@ -20,7 +21,9 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
+
+logger = logging.getLogger(__name__)
 
 # ==================== Configuration ====================
 
@@ -31,6 +34,8 @@ DEFAULT_IMAGE_SIZE = "1024x768"
 DEFAULT_TIMEOUT = 180.0
 VIDEO_POLL_INTERVAL = 5.0
 VIDEO_POLL_TIMEOUT = 600.0
+MAX_RETRIES = 3
+RETRY_BACKOFF = 2.0
 
 AVAILABLE_IMAGE_MODELS = {
     "agnes-image-2.0-flash": "Agnes Image 2.0 Flash",
@@ -102,6 +107,47 @@ async def _download_file(url: str, output_dir: Path, ext: str = ".png") -> Path:
     return target
 
 
+async def _request_with_retry(
+    method: str,
+    url: str,
+    *,
+    json: dict[str, Any] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Make an HTTP request with automatic retry on transient errors."""
+    last_error: Exception | None = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                if method.upper() == "GET":
+                    resp = await client.get(url, headers=_headers())
+                else:
+                    resp = await client.post(url, headers=_headers(), json=json)
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    raise AgnesError(f"Transient error {resp.status_code}: {resp.text}")
+                if resp.status_code >= 400:
+                    raise AgnesError(f"API error {resp.status_code}: {resp.text}")
+                return resp.json()
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
+            last_error = e
+            if attempt < MAX_RETRIES - 1:
+                wait = RETRY_BACKOFF * (2 ** attempt)
+                logger.warning("Request failed (attempt %d/%d): %s. Retrying in %.1fs...",
+                               attempt + 1, MAX_RETRIES, e, wait)
+                await asyncio.sleep(wait)
+        except AgnesError as e:
+            if "Transient" in str(e) and attempt < MAX_RETRIES - 1:
+                last_error = e
+                wait = RETRY_BACKOFF * (2 ** attempt)
+                logger.warning("Transient error (attempt %d/%d): %s. Retrying in %.1fs...",
+                               attempt + 1, MAX_RETRIES, e, wait)
+                await asyncio.sleep(wait)
+            else:
+                raise
+
+    raise AgnesError(f"Request failed after {MAX_RETRIES} attempts: {last_error}")
+
+
 # ==================== Image API ====================
 
 async def generate_image(
@@ -127,12 +173,7 @@ async def generate_image(
         },
     }
 
-    url = f"{base_url}/images/generations"
-    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        resp = await client.post(url, headers=_headers(), json=payload)
-        if resp.status_code >= 400:
-            raise AgnesError(f"API error {resp.status_code}: {resp.text}")
-        data = resp.json()
+    data = await _request_with_retry("POST", f"{base_url}/images/generations", json=payload)
 
     b64_json = None
     image_url = None
@@ -192,12 +233,7 @@ async def create_video_task(
     if seed is not None:
         payload["seed"] = seed
 
-    url = f"{base_url}/videos"
-    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        resp = await client.post(url, headers=_headers(), json=payload)
-        if resp.status_code >= 400:
-            raise AgnesError(f"API error {resp.status_code}: {resp.text}")
-        data = resp.json()
+    data = await _request_with_retry("POST", f"{base_url}/videos", json=payload)
 
     return {
         "task_id": data.get("id"),
@@ -214,24 +250,26 @@ async def get_video_result(
     if not video_id and not task_id:
         raise AgnesError("video_id or task_id required")
 
+    base_url = os.getenv("AGNES_API_BASE", DEFAULT_API_BASE).rstrip("/")
+
     if video_id:
-        url = f"https://apihub.agnes-ai.com/agnesapi?video_id={video_id}"
+        url = f"{base_url}/agnesapi?video_id={video_id}"
     else:
-        base_url = os.getenv("AGNES_API_BASE", DEFAULT_API_BASE).rstrip("/")
         url = f"{base_url}/videos/{task_id}"
 
-    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        resp = await client.get(url, headers=_headers())
-        if resp.status_code >= 400:
-            raise AgnesError(f"API error {resp.status_code}: {resp.text}")
-        data = resp.json()
+    data = await _request_with_retry("GET", url)
+
+    # The API returns the video download URL in remixed_from_video_id when completed
+    video_url = None
+    if data.get("status") == "completed":
+        video_url = data.get("remixed_from_video_id") or data.get("video_url")
 
     return {
         "task_id": data.get("id"),
         "video_id": data.get("video_id"),
         "status": data.get("status"),
         "progress": data.get("progress"),
-        "video_url": data.get("remixed_from_video_id") if data.get("status") == "completed" else None,
+        "video_url": video_url,
         "seconds": data.get("seconds"),
         "size": data.get("size"),
         "error": data.get("error"),
@@ -262,8 +300,8 @@ async def generate_video(
     if not video_id and not task_id:
         raise AgnesError(f"No video_id or task_id returned: {task}")
 
-    start = time.time()
-    while time.time() - start < poll_timeout:
+    start = asyncio.get_event_loop().time()
+    while asyncio.get_event_loop().time() - start < poll_timeout:
         result = await get_video_result(video_id=video_id, task_id=task_id)
         status = result.get("status")
         if status == "completed":
@@ -274,7 +312,7 @@ async def generate_video(
             return {**result, "local_path": local_path}
         if status == "failed":
             raise AgnesError(f"Video generation failed: {result.get('error')}")
-        time.sleep(VIDEO_POLL_INTERVAL)
+        await asyncio.sleep(VIDEO_POLL_INTERVAL)
 
     raise AgnesError(f"Video generation timed out after {poll_timeout}s")
 
